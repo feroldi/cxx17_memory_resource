@@ -369,10 +369,11 @@ protected:
                      std::size_t alignment) override;
   bool do_is_equal(const memory_resource &other) const noexcept override;
 };
+#endif
 
 class monotonic_buffer_resource : public memory_resource
 {
-  memory_resource *upstream_rsrc;
+  memory_resource *upstream;
   void *current_buffer;
   std::size_t next_buffer_size;
 
@@ -401,7 +402,7 @@ public:
   operator=(const monotonic_buffer_resource &) = delete;
 
   void release();
-  memory_resource *upstream_resource() const;
+  memory_resource *upstream_resource() const { return upstream; }
 
 protected:
   void *do_allocate(std::size_t bytes, std::size_t alignment) override;
@@ -410,7 +411,6 @@ protected:
 
   bool do_is_equal(const memory_resource &other) const noexcept override;
 };
-#endif
 
 inline memory_resource *new_delete_resource() noexcept
 {
@@ -418,15 +418,23 @@ inline memory_resource *new_delete_resource() noexcept
   {
     void *do_allocate(std::size_t bytes, std::size_t alignment) override
     {
-      std::align_val_t al = std::align_val_t(alignment);
-      return ::operator new(bytes, al);
+      if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+      {
+        std::align_val_t al = std::align_val_t(alignment);
+        return ::operator new(bytes, al);
+      }
+      return ::operator new(bytes);
     }
 
     void do_deallocate(void *p, std::size_t,
                        std::size_t alignment) noexcept override
     {
-      std::align_val_t al = std::align_val_t(alignment);
-      return ::operator delete(p, al);
+      if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+      {
+        std::align_val_t al = std::align_val_t(alignment);
+        return ::operator delete(p, al);
+      }
+      return ::operator delete(p);
     }
 
     bool do_is_equal(const memory_resource &other) const noexcept override
