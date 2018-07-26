@@ -7,14 +7,14 @@
 #ifndef FEROLDI_CXX17_MEMORY_RESOURCE
 #define FEROLDI_CXX17_MEMORY_RESOURCE
 
+#include <atomic>
 #include <cassert>
 #include <cstddef>
 #include <memory>
+#include <stdexcept>
 #include <tuple>
 #include <type_traits>
 #include <utility>
-
-#define FEROLDI_CXX17_MEMORY_RESOURCE_ASSERT(x) assert(x)
 
 /*
 memory_resource synopsis
@@ -22,8 +22,9 @@ namespace std::pmr {
   // [mem.res.class], class memory_­resource
   class memory_resource;
 
-  bool operator==(const memory_resource& a, const memory_resource& b) noexcept;
-  bool operator!=(const memory_resource& a, const memory_resource& b) noexcept;
+  bool operator==(const memory_resource& a, const memory_resource& b)
+noexcept; bool operator!=(const memory_resource& a, const
+memory_resource& b) noexcept;
 
   // [mem.poly.allocator.class], class template polymorphic_­allocator
   template<class Tp> class polymorphic_allocator;
@@ -51,30 +52,26 @@ namespace std::pmr {
 
 namespace feroldi::pmr {
 
-namespace detail {
-template <class T>
-struct always_false : ::std::false_type
-{};
-} // namespace detail
-
 // [mem.res.class], class memory_resource
 class memory_resource
 {
+  static constexpr std::size_t _max_align = alignof(std::max_align_t);
+
 public:
   // [mem.res.public], public member functions
+  memory_resource() = default;
   memory_resource(const memory_resource &) = default;
   virtual ~memory_resource() = default;
 
   memory_resource &operator=(const memory_resource &) = default;
 
-  [[nodiscard]] void *
-  allocate(::std::size_t bytes,
-           ::std::size_t alignment = alignof(::std::max_align_t)) {
+  [[nodiscard]] void *allocate(std::size_t bytes,
+                               std::size_t alignment = _max_align) {
     return do_allocate(bytes, alignment);
   }
 
-  void deallocate(void *p, ::std::size_t bytes,
-                  ::std::size_t alignment = alignof(::std::max_align_t))
+  void deallocate(void *p, std::size_t bytes,
+                  std::size_t alignment = _max_align)
   {
     return do_deallocate(p, bytes, alignment);
   }
@@ -86,9 +83,9 @@ public:
 
 private:
   // [mem.res.private], private member functions
-  virtual void *do_allocate(::std::size_t bytes, ::std::size_t alignment) = 0;
-  virtual void do_deallocate(void *p, ::std::size_t bytes,
-                             ::std::size_t alignment) = 0;
+  virtual void *do_allocate(std::size_t bytes, std::size_t alignment) = 0;
+  virtual void do_deallocate(void *p, std::size_t bytes,
+                             std::size_t alignment) = 0;
   virtual bool do_is_equal(const memory_resource &other) const noexcept = 0;
 };
 
@@ -113,71 +110,84 @@ template <class Tp>
 class polymorphic_allocator
 {
 private:
-  memory_resource *memory_rsrc;
+  memory_resource *res;
 
 public:
   using value_type = Tp;
 
   // [mem.poly.allocator.ctor], constructors
-  polymorphic_allocator() noexcept : memory_rsrc(get_default_resource()) {}
-  polymorphic_allocator(memory_resource *r) : memory_rsrc(r)
-  {
-    FEROLDI_CXX17_MEMORY_RESOURCE_ASSERT(r);
-  }
+  polymorphic_allocator() noexcept : res(get_default_resource()) {}
+  polymorphic_allocator(memory_resource *r) : res(r) { assert(r); }
 
-  polymorphic_allocator(const polymorphic_allocator &other) = default;
+  polymorphic_allocator(const polymorphic_allocator &) = default;
 
   template <class U>
   polymorphic_allocator(const polymorphic_allocator<U> &other) noexcept
-    : memory_rsrc(other.resource())
+    : res(other.resource())
   {}
 
-  polymorphic_allocator &operator=(const polymorphic_allocator &rhs) = delete;
+  polymorphic_allocator &operator=(const polymorphic_allocator &) = delete;
 
   // [mem.poly.allocator.mem], member functions
-  [[nodiscard]] Tp *allocate(::std::size_t n);
-  {
-    return static_cast<Tp *>(memory_rsrc->allocate(n * sizeof(Tp), alignof(T)));
+  [[nodiscard]] Tp *allocate(std::size_t n) {
+    return static_cast<Tp *>(res->allocate(n * sizeof(Tp), alignof(Tp)));
   }
 
-  void deallocate(Tp *p, ::std::size_t n)
+  void deallocate(Tp *p, std::size_t n)
   {
-    return memory_rsrc->deallocate(p, n * sizeof(Tp), alignof(T));
+    return res->deallocate(p, n * sizeof(Tp), alignof(Tp));
   }
 
   template <class T, class... Args>
   void construct(T *p, Args &&... args)
   {
-    // http://eel.is/c++draft/allocator.uses#construction
-    using Alloc = polymorphic_allocator;
-    if constexpr (!::std::uses_allocator_v<T, Alloc> &&
-                  ::std::is_constructible_v<T, Args...>)
-      ::new (p) T(std::forward<Args>(args)...);
-    else if constexpr (::std::uses_allocator_v<T, Alloc> &&
-                       ::std::is_constructible_v<T, ::std::allocator_arg_t,
-                                                 Alloc, Args...>)
-      ::new (p) T(::std::allocator_arg, *this, std::forward<Args>(args)...);
-    else if constexpr (::std::uses_allocator_v<T, Alloc> &&
-                       ::std::is_constructible_v<T, Args..., Alloc>)
-      ::new (p) T(std::forward<Args>(args)..., *this);
-    else
-      static_assert(
-        detail::always_false<T>::value,
-        "the request for uses-allocator construction is ill-formed");
+    using uses_alloc_tag =
+      uses_alloc_ctor_t<T, polymorphic_allocator &, Args...>;
+    return _construct(uses_alloc_tag(), p, std::forward<Args>(args)...);
   }
 
   template <class T1, class T2, class... Args1, class... Args2>
-  void construct(::std::pair<T1, T2> *p, ::std::piecewise_construct_t,
-                 ::std::tuple<Args1...> x, ::std::tuple<Args2...> y);
+  void construct(std::pair<T1, T2> *p, std::piecewise_construct_t,
+                 std::tuple<Args1...> x, std::tuple<Args2...> y)
+  {
+    using x_uses_alloc_tag =
+      uses_alloc_ctor_t<T1, polymorphic_allocator &, Args1...>;
+    using y_uses_alloc_tag =
+      uses_alloc_ctor_t<T2, polymorphic_allocator &, Args2...>;
+
+    ::new (p) std::pair<T1, T2>(
+      std::piecewise_construct,
+      _construct_p(x_uses_alloc_tag(), std::forward<Args1>(x)...),
+      _construct_p(y_uses_alloc_tag(), std::forward<Args2>(y)...));
+  }
 
   template <class T1, class T2>
-  void construct(::std::pair<T1, T2> *p);
+  void construct(std::pair<T1, T2> *p)
+  {
+    return construct(p, std::piecewise_construct, std::tuple(), std::tuple());
+  }
+
   template <class T1, class T2, class U, class V>
-  void construct(::std::pair<T1, T2> *p, U &&x, V &&y);
+  void construct(std::pair<T1, T2> *p, U &&x, V &&y)
+  {
+    return construct(p, std::forward_as_tuple(std::forward<U>(x)),
+                     std::forward_as_tuple(std::forward<V>(y)));
+  }
+
   template <class T1, class T2, class U, class V>
-  void construct(::std::pair<T1, T2> *p, const ::std::pair<U, V> &pr);
+  void construct(std::pair<T1, T2> *p, const std::pair<U, V> &pr)
+  {
+    return construct(p, std::forward_as_tuple(pr.first),
+                     std::forward_as_tuple(pr.second));
+  }
+
   template <class T1, class T2, class U, class V>
-  void construct(::std::pair<T1, T2> *p, ::std::pair<U, V> &&pr);
+  void construct(std::pair<T1, T2> *p, std::pair<U, V> &&pr)
+  {
+    return construct(p, std::piecewise_construct,
+                     std::forward_as_tuple(std::forward<U>(pr.first)),
+                     std::forward_as_tuple(std::forward<V>(pr.second)));
+  }
 
   template <class T>
   void destroy(T *p)
@@ -190,8 +200,85 @@ public:
     return polymorphic_allocator();
   }
 
-  memory_resource *resource() const { return memory_rsrc; }
-}
+  memory_resource *resource() const { return res; }
+
+private:
+  template <bool UsesAlloc, typename T, typename Alloc, typename... Args>
+  struct uses_alloc_ctor_impl
+  {
+    static const int value = 0;
+  };
+
+  template <typename T, typename Alloc, typename... Args>
+  struct uses_alloc_ctor_impl<true, T, Alloc, Args...>
+  {
+    static const bool first_ctor =
+      std::is_constructible_v<T, std::allocator_arg_t, Alloc, Args...>;
+    static const bool second_ctor =
+      std::conditional_t<first_ctor, std::false_type,
+                         std::is_constructible<T, Args..., Alloc>>::value;
+
+    static_assert(first_ctor || second_ctor,
+                  " request for uses-allocator construction is ill-formed");
+
+    static const int value = first_ctor ? 1 : 2;
+  };
+
+  // FIXME: std::uses_allocator might not consider std::erased_type for
+  // libraries that don't implement it.
+  template <typename T, typename Alloc, typename... Args>
+  struct uses_alloc_ctor
+  {
+    using type = std::integral_constant<
+      int, uses_alloc_ctor_impl<std::uses_allocator_v<T, Alloc>, T, Alloc,
+                                Args...>::value>;
+  };
+
+  template <typename T, typename Alloc, typename... Args>
+  using uses_alloc_ctor_t = typename uses_alloc_ctor<T, Alloc, Args...>::type;
+
+  using uses_alloc0 = std::integral_constant<int, 0>;
+  using uses_alloc1 = std::integral_constant<int, 1>;
+  using uses_alloc2 = std::integral_constant<int, 2>;
+
+  template <typename T, typename... Args>
+  void _construct(uses_alloc0, T *storage, Args &&... args)
+  {
+    ::new (storage) T(std::forward<Args>(args)...);
+  }
+
+  template <typename T, typename... Args>
+  void _construct(uses_alloc1, T *storage, Args &&... args)
+  {
+    ::new (storage) T(std::allocator_arg, *this, std::forward<Args>(args)...);
+  }
+
+  template <typename T, typename... Args>
+  void _construct(uses_alloc2, T *storage, Args &&... args)
+  {
+    ::new (storage) T(std::forward<Args>(args)..., *this);
+  }
+
+  // Piecewise construction.
+
+  template <typename Tuple>
+  Tuple &&_construct_p(uses_alloc0, Tuple &t)
+  {
+    return std::move(t);
+  }
+
+  template <typename... Args>
+  decltype(auto) _construct_p(uses_alloc1, std::tuple<Args...> &t)
+  {
+    return std::tuple_cat(std::tuple(std::allocator_arg, *this), std::move(t));
+  }
+
+  template <typename... Args>
+  decltype(auto) _construct_p(uses_alloc2, std::tuple<Args...> &t)
+  {
+    return std::tuple_cat(std::move(t), std::tuple(*this));
+  }
+};
 
 template <class T1, class T2>
 inline bool operator==(const polymorphic_allocator<T1> &a,
@@ -207,6 +294,10 @@ inline bool operator!=(const polymorphic_allocator<T1> &a,
   return !(a == b);
 }
 
+// TODO: synchronized_pool_resource
+// TODO: unsynchronized_pool_resource
+// TODO: monotonic_buffer_resource
+#if 0
 struct pool_options
 {
   size_t max_blocks_per_chunk = 0;
@@ -240,9 +331,9 @@ public:
   pool_options options() const;
 
 protected:
-  void *do_allocate(::std::size_t bytes, ::std::size_t alignment) override;
-  void do_deallocate(void *p, ::std::size_t bytes,
-                     ::std::size_t alignment) override;
+  void *do_allocate(std::size_t bytes, std::size_t alignment) override;
+  void do_deallocate(void *p, std::size_t bytes,
+                     std::size_t alignment) override;
   bool do_is_equal(const memory_resource &other) const noexcept override;
 };
 
@@ -273,9 +364,9 @@ public:
   pool_options options() const;
 
 protected:
-  void *do_allocate(::std::size_t bytes, ::std::size_t alignment) override;
-  void do_deallocate(void *p, ::std::size_t bytes,
-                     ::std::size_t alignment) override;
+  void *do_allocate(std::size_t bytes, std::size_t alignment) override;
+  void do_deallocate(void *p, std::size_t bytes,
+                     std::size_t alignment) override;
   bool do_is_equal(const memory_resource &other) const noexcept override;
 };
 
@@ -283,22 +374,22 @@ class monotonic_buffer_resource : public memory_resource
 {
   memory_resource *upstream_rsrc;
   void *current_buffer;
-  ::std::size_t next_buffer_size;
+  std::size_t next_buffer_size;
 
 public:
   explicit monotonic_buffer_resource(memory_resource *upstream);
-  monotonic_buffer_resource(::std::size_t initial_size,
+  monotonic_buffer_resource(std::size_t initial_size,
                             memory_resource *upstream);
-  monotonic_buffer_resource(void *buffer, ::std::size_t buffer_size,
+  monotonic_buffer_resource(void *buffer, std::size_t buffer_size,
                             memory_resource *upstream);
 
   monotonic_buffer_resource()
     : monotonic_buffer_resource(get_default_resource())
   {}
-  explicit monotonic_buffer_resource(::std::size_t initial_size)
+  explicit monotonic_buffer_resource(std::size_t initial_size)
     : monotonic_buffer_resource(initial_size, get_default_resource())
   {}
-  monotonic_buffer_resource(void *buffer, ::std::size_t buffer_size)
+  monotonic_buffer_resource(void *buffer, std::size_t buffer_size)
     : monotonic_buffer_resource(buffer, buffer_size, get_default_resource())
   {}
 
@@ -313,13 +404,77 @@ public:
   memory_resource *upstream_resource() const;
 
 protected:
-  void *do_allocate(::std::size_t bytes, ::std::size_t alignment) override;
-  void do_deallocate(void *p, ::std::size_t bytes,
-                     ::std::size_t alignment) override;
+  void *do_allocate(std::size_t bytes, std::size_t alignment) override;
+  void do_deallocate(void *p, std::size_t bytes,
+                     std::size_t alignment) override;
 
   bool do_is_equal(const memory_resource &other) const noexcept override;
 };
+#endif
+
+inline memory_resource *new_delete_resource() noexcept
+{
+  struct : memory_resource
+  {
+    void *do_allocate(std::size_t bytes, std::size_t alignment) override
+    {
+      std::align_val_t al = std::align_val_t(alignment);
+      return ::operator new(bytes, al);
+    }
+
+    void do_deallocate(void *p, std::size_t,
+                       std::size_t alignment) noexcept override
+    {
+      std::align_val_t al = std::align_val_t(alignment);
+      return ::operator delete(p, al);
+    }
+
+    bool do_is_equal(const memory_resource &other) const noexcept override
+    {
+      return this == &other;
+    }
+  } static r;
+  return &r;
+}
+
+inline memory_resource *null_memory_resource() noexcept
+{
+  struct : memory_resource
+  {
+    void *do_allocate(std::size_t, std::size_t) override
+    {
+      throw std::bad_alloc();
+    }
+
+    void do_deallocate(void *, std::size_t, std::size_t) noexcept override {}
+
+    bool do_is_equal(const memory_resource &other) const noexcept override
+    {
+      return this == &other;
+    }
+  } static r;
+  return &r;
+}
+
+namespace detail {
+std::atomic<memory_resource *> &get_default_resource_impl() noexcept
+{
+  static std::atomic<memory_resource *> r(new_delete_resource());
+  return r;
+}
+} // namespace detail
+
+inline memory_resource *get_default_resource() noexcept
+{
+  return detail::get_default_resource_impl().load();
+}
+
+inline memory_resource *set_default_resource(memory_resource *r) noexcept
+{
+  if (!r)
+    r = new_delete_resource();
+  return detail::get_default_resource_impl().exchange(r);
+}
 
 } // namespace feroldi::pmr
-
 #endif
