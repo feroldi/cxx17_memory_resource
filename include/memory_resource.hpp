@@ -392,7 +392,6 @@ public:
     , region_cur_ptr(reinterpret_cast<std::byte *>(buffer))
     , region_end_ptr(reinterpret_cast<std::byte *>(buffer) + buffer_size)
     , next_region_size(compute_next_grow(buffer_size))
-    , owns_region(false)
   {
     assert(buffer_size > 0);
   }
@@ -418,6 +417,8 @@ public:
 
   void release()
   {
+    // Deallocates all regions by walking backwards in the list. Stops walking
+    // if we hit a buffer we don't own, or when there aren't any more regions.
     while (owns_region && region_base_ptr)
     {
       owned_region_header header;
@@ -451,6 +452,17 @@ protected:
       }
     }
 
+    // We either don't have a region yet, or we need to allocate one.
+    // When the initial buffer (if any) is exhausted, it obtains additional
+    // buffers from an upstream memory resource supplied at construction.
+    // Each additional buffer is larger than the previous one, following a
+    // geometric progression.
+
+    // The next region needs to be able to fit its own header and the requested
+    // bytes. Alignment is added so there's enough space for the requested
+    // bytes, otherwise aligned addresses may cause the memory resource to think
+    // the region is full, when in fact it has enough space but no good aligned
+    // address.
     const auto required_size = sizeof(owned_region_header) + alignment + bytes;
     if (next_region_size < required_size)
       next_region_size = required_size;
@@ -472,7 +484,14 @@ protected:
       assert(next_region_size >= old_next_region_size);
       owns_region = true;
 
-      return do_allocate(bytes, alignment);
+      // We could just call do_allocate recursively here, but we need to assert
+      // that the aligned address is good.
+      std::size_t space = region_end_ptr - region_cur_ptr;
+      void *cur_ptr = region_cur_ptr;
+      const auto aligned_cur_ptr = std::align(alignment, bytes, cur_ptr, space);
+      assert(aligned_cur_ptr);
+      region_cur_ptr = static_cast<std::byte *>(aligned_cur_ptr) + bytes;
+      return aligned_cur_ptr;
     }
 
     return nullptr;
@@ -489,14 +508,23 @@ protected:
   }
 
 private:
+  // Upstream memory resource from which we allocate regions.
   memory_resource *upstream;
 
-  std::byte *region_base_ptr = nullptr;
-  std::byte *region_cur_ptr = nullptr;
-  std::byte *region_end_ptr = nullptr;
-  std::size_t next_region_size = 4096;
+  std::byte *region_base_ptr = nullptr; //< Current region.
+  std::byte *region_cur_ptr = nullptr; //< Current free space in the region.
+  std::byte *region_end_ptr = nullptr; //< End of the region.
+  std::size_t next_region_size = 4096; //< Size of the next allocated region.
+
+  // Whether we allocated the region ourselves. Only the first region may be
+  // unowned.
   bool owns_region = false;
 
+  // Information about a region allocated by this monotonic buffer resource. The
+  // first bytes of an owned region contain the following structure.
+  //
+  // This approach effectively creates a linked list of regions, connecting the
+  // last region to the previous one and so on.
   struct owned_region_header
   {
     std::byte *prev_region_base_ptr;
