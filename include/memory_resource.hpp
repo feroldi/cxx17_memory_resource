@@ -467,7 +467,9 @@ protected:
       region_base_ptr = next_region_base_ptr;
       region_cur_ptr = next_region_base_ptr + sizeof(owned_region_header);
       region_end_ptr = next_region_base_ptr + next_region_size;
+      [[maybe_unused]] const auto old_next_region_size = next_region_size;
       next_region_size = compute_next_grow(next_region_size);
+      assert(next_region_size >= old_next_region_size);
       owns_region = true;
 
       return do_allocate(bytes, alignment);
