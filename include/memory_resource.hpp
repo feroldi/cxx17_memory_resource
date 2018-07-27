@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <tuple>
@@ -373,43 +374,155 @@ protected:
 
 class monotonic_buffer_resource : public memory_resource
 {
-  memory_resource *upstream;
-  void *current_buffer;
-  std::size_t next_buffer_size;
-
 public:
-  explicit monotonic_buffer_resource(memory_resource *upstream);
-  monotonic_buffer_resource(std::size_t initial_size,
-                            memory_resource *upstream);
+  explicit monotonic_buffer_resource(memory_resource *upstream)
+    : upstream(upstream)
+  {}
+
+  monotonic_buffer_resource(std::size_t initial_size, memory_resource *upstream)
+    : upstream(upstream), next_region_size(next_power_of_two(initial_size))
+  {
+    assert(initial_size > 0);
+  }
+
   monotonic_buffer_resource(void *buffer, std::size_t buffer_size,
-                            memory_resource *upstream);
+                            memory_resource *upstream)
+    : upstream(upstream)
+    , region_base_ptr(reinterpret_cast<std::byte *>(buffer))
+    , region_cur_ptr(reinterpret_cast<std::byte *>(buffer))
+    , region_end_ptr(reinterpret_cast<std::byte *>(buffer) + buffer_size)
+    , next_region_size(compute_next_grow(buffer_size))
+    , owns_region(false)
+  {
+    assert(buffer_size > 0);
+  }
 
   monotonic_buffer_resource()
     : monotonic_buffer_resource(get_default_resource())
   {}
+
   explicit monotonic_buffer_resource(std::size_t initial_size)
     : monotonic_buffer_resource(initial_size, get_default_resource())
   {}
+
   monotonic_buffer_resource(void *buffer, std::size_t buffer_size)
     : monotonic_buffer_resource(buffer, buffer_size, get_default_resource())
   {}
 
   monotonic_buffer_resource(const monotonic_buffer_resource &) = delete;
 
-  virtual ~monotonic_buffer_resource();
+  virtual ~monotonic_buffer_resource() { release(); }
 
   monotonic_buffer_resource &
   operator=(const monotonic_buffer_resource &) = delete;
 
-  void release();
+  void release()
+  {
+    while (owns_region && region_base_ptr)
+    {
+      owned_region_header header;
+      std::memcpy(&header, region_base_ptr, sizeof(header));
+      upstream->deallocate(region_base_ptr, region_size());
+      region_base_ptr = header.prev_region_base_ptr;
+      region_end_ptr = header.prev_region_end_ptr;
+      owns_region = header.owns_prev_region;
+    }
+
+    assert(!owns_region);
+    region_cur_ptr = region_base_ptr;
+  }
+
   memory_resource *upstream_resource() const { return upstream; }
 
 protected:
-  void *do_allocate(std::size_t bytes, std::size_t alignment) override;
-  void do_deallocate(void *p, std::size_t bytes,
-                     std::size_t alignment) override;
+  void *do_allocate(std::size_t bytes, std::size_t alignment) override
+  {
+    if (region_base_ptr)
+    {
+      assert(region_cur_ptr);
 
-  bool do_is_equal(const memory_resource &other) const noexcept override;
+      std::size_t space = region_end_ptr - region_cur_ptr;
+      void *cur_ptr = region_cur_ptr;
+      if (const auto aligned_cur_ptr =
+            std::align(alignment, bytes, cur_ptr, space))
+      {
+        region_cur_ptr = static_cast<std::byte *>(aligned_cur_ptr) + bytes;
+        return aligned_cur_ptr;
+      }
+    }
+
+    const auto required_size = sizeof(owned_region_header) + alignment + bytes;
+    if (next_region_size < required_size)
+      next_region_size = required_size;
+
+    const auto next_region_base_ptr =
+      static_cast<std::byte *>(upstream->allocate(next_region_size));
+    if (next_region_base_ptr)
+    {
+      auto next_region_header = new (next_region_base_ptr) owned_region_header;
+      next_region_header->prev_region_base_ptr = region_base_ptr,
+      next_region_header->prev_region_end_ptr = region_end_ptr,
+      next_region_header->owns_prev_region = owns_region,
+
+      region_base_ptr = next_region_base_ptr;
+      region_cur_ptr = next_region_base_ptr + sizeof(owned_region_header);
+      region_end_ptr = next_region_base_ptr + next_region_size;
+      next_region_size = compute_next_grow(next_region_size);
+      owns_region = true;
+
+      return do_allocate(bytes, alignment);
+    }
+
+    return nullptr;
+  }
+
+  void do_deallocate(void *, std::size_t, std::size_t) override
+  {
+    // Do nothing.
+  }
+
+  bool do_is_equal(const memory_resource &other) const noexcept override
+  {
+    return this == &other;
+  }
+
+private:
+  memory_resource *upstream;
+
+  std::byte *region_base_ptr = nullptr;
+  std::byte *region_cur_ptr = nullptr;
+  std::byte *region_end_ptr = nullptr;
+  std::size_t next_region_size = 4096;
+  bool owns_region = false;
+
+  struct owned_region_header
+  {
+    std::byte *prev_region_base_ptr;
+    std::byte *prev_region_end_ptr;
+    bool owns_prev_region;
+  };
+
+  constexpr std::size_t compute_next_grow(std::size_t reg_size) const
+  {
+    return next_power_of_two(reg_size) * 2;
+  }
+
+  constexpr std::size_t next_power_of_two(std::size_t s) const
+  {
+    --s;
+    s |= s >> 1;
+    s |= s >> 2;
+    s |= s >> 4;
+    s |= s >> 8;
+    s |= s >> 16;
+    s |= s >> 32;
+    return s + 1;
+  }
+
+  std::size_t region_size() const
+  {
+    return static_cast<std::size_t>(region_end_ptr - region_base_ptr);
+  }
 };
 
 inline memory_resource *new_delete_resource() noexcept
@@ -420,7 +533,7 @@ inline memory_resource *new_delete_resource() noexcept
     {
       if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
       {
-        std::align_val_t al = std::align_val_t(alignment);
+        auto al = std::align_val_t(alignment);
         return ::operator new(bytes, al);
       }
       return ::operator new(bytes);
@@ -431,7 +544,7 @@ inline memory_resource *new_delete_resource() noexcept
     {
       if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
       {
-        std::align_val_t al = std::align_val_t(alignment);
+        auto al = std::align_val_t(alignment);
         return ::operator delete(p, al);
       }
       return ::operator delete(p);
