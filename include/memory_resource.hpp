@@ -378,7 +378,7 @@ public:
   {}
 
   monotonic_buffer_resource(std::size_t initial_size, memory_resource *upstream)
-    : upstream(upstream), next_region_size(next_power_of_two(initial_size))
+    : upstream(upstream), next_region_size(initial_size)
   {
     assert(initial_size > 0);
   }
@@ -441,9 +441,8 @@ protected:
       assert(region_cur_ptr);
 
       std::size_t space = region_end_ptr - region_cur_ptr;
-      void *cur_ptr = region_cur_ptr;
-      if (const auto aligned_cur_ptr =
-            std::align(alignment, bytes, cur_ptr, space))
+      void *aligned_cur_ptr = region_cur_ptr;
+      if (std::align(alignment, bytes, aligned_cur_ptr, space))
       {
         region_cur_ptr = static_cast<std::byte *>(aligned_cur_ptr) + bytes;
         return aligned_cur_ptr;
@@ -532,19 +531,7 @@ private:
 
   constexpr std::size_t compute_next_grow(std::size_t reg_size) const
   {
-    return next_power_of_two(reg_size) * 2;
-  }
-
-  constexpr std::size_t next_power_of_two(std::size_t s) const
-  {
-    --s;
-    s |= s >> 1;
-    s |= s >> 2;
-    s |= s >> 4;
-    s |= s >> 8;
-    s |= s >> 16;
-    s |= s >> 32;
-    return s + 1;
+    return reg_size * 2;
   }
 
   std::size_t region_size() const
