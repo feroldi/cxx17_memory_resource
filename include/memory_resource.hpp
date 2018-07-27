@@ -23,9 +23,8 @@ namespace std::pmr {
   // [mem.res.class], class memory_­resource
   class memory_resource;
 
-  bool operator==(const memory_resource& a, const memory_resource& b)
-noexcept; bool operator!=(const memory_resource& a, const
-memory_resource& b) noexcept;
+  bool operator==(const memory_resource& a, const memory_resource& b) noexcept;
+  bool operator!=(const memory_resource& a, const memory_resource& b) noexcept;
 
   // [mem.poly.allocator.class], class template polymorphic_­allocator
   template<class Tp> class polymorphic_allocator;
@@ -297,7 +296,6 @@ inline bool operator!=(const polymorphic_allocator<T1> &a,
 
 // TODO: synchronized_pool_resource
 // TODO: unsynchronized_pool_resource
-// TODO: monotonic_buffer_resource
 #if 0
 struct pool_options
 {
