@@ -155,10 +155,9 @@ public:
     using y_uses_alloc_tag =
       uses_alloc_ctor_t<T2, polymorphic_allocator &, Args2...>;
 
-    ::new (p) std::pair<T1, T2>(
-      std::piecewise_construct,
-      _construct_p(x_uses_alloc_tag(), std::forward<Args1>(x)...),
-      _construct_p(y_uses_alloc_tag(), std::forward<Args2>(y)...));
+    ::new (p) std::pair<T1, T2>(std::piecewise_construct,
+                                _construct_p(x_uses_alloc_tag(), std::move(x)),
+                                _construct_p(y_uses_alloc_tag(), std::move(y)));
   }
 
   template <class T1, class T2>
