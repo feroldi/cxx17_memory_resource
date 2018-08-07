@@ -592,7 +592,7 @@ inline memory_resource *null_memory_resource() noexcept
 }
 
 namespace detail {
-std::atomic<memory_resource *> &get_default_resource_impl() noexcept
+inline std::atomic<memory_resource *> &get_default_resource_impl() noexcept
 {
   static std::atomic<memory_resource *> r(new_delete_resource());
   return r;
