@@ -463,15 +463,16 @@ protected:
     if (next_region_size < required_size)
       next_region_size = required_size;
 
-    const auto next_region_base_ptr =
-      static_cast<std::byte *>(upstream->allocate(next_region_size));
-    if (next_region_base_ptr)
+    const auto next_region_storage = upstream->allocate(next_region_size);
+    if (next_region_storage)
     {
-      auto next_region_header = new (next_region_base_ptr) owned_region_header;
+      auto next_region_header = new (next_region_storage) owned_region_header;
       next_region_header->prev_region_base_ptr = region_base_ptr,
       next_region_header->prev_region_end_ptr = region_end_ptr,
       next_region_header->owns_prev_region = owns_region,
 
+      const auto next_region_base_ptr =
+        static_cast<std::byte *>(next_region_storage);
       region_base_ptr = next_region_base_ptr;
       region_cur_ptr = next_region_base_ptr + sizeof(owned_region_header);
       region_end_ptr = next_region_base_ptr + next_region_size;
