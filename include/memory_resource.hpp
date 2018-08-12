@@ -269,13 +269,14 @@ private:
   template <typename... Args>
   decltype(auto) _construct_p(uses_alloc1, std::tuple<Args...> &t)
   {
-    return std::tuple_cat(std::tuple(std::allocator_arg, *this), std::move(t));
+    return std::tuple_cat(std::make_tuple(std::allocator_arg, *this),
+                          std::move(t));
   }
 
   template <typename... Args>
   decltype(auto) _construct_p(uses_alloc2, std::tuple<Args...> &t)
   {
-    return std::tuple_cat(std::move(t), std::tuple(*this));
+    return std::tuple_cat(std::move(t), std::make_tuple(*this));
   }
 };
 
@@ -469,7 +470,7 @@ protected:
       auto next_region_header = new (next_region_storage) owned_region_header;
       next_region_header->prev_region_base_ptr = region_base_ptr,
       next_region_header->prev_region_end_ptr = region_end_ptr,
-      next_region_header->owns_prev_region = owns_region,
+      next_region_header->owns_prev_region = owns_region;
 
       const auto next_region_base_ptr =
         static_cast<std::byte *>(next_region_storage);
