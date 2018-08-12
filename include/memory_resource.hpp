@@ -373,9 +373,7 @@ protected:
 class monotonic_buffer_resource : public memory_resource
 {
 public:
-  explicit monotonic_buffer_resource(memory_resource *mr)
-    : upstream(mr)
-  {}
+  explicit monotonic_buffer_resource(memory_resource *mr) : upstream(mr) {}
 
   monotonic_buffer_resource(std::size_t initial_size, memory_resource *mr)
     : upstream(mr), next_region_size(initial_size)
@@ -543,7 +541,7 @@ private:
 
 inline memory_resource *new_delete_resource() noexcept
 {
-  struct : memory_resource
+  struct type : memory_resource
   {
     void *do_allocate(std::size_t bytes, std::size_t alignment) override
     {
@@ -570,13 +568,18 @@ inline memory_resource *new_delete_resource() noexcept
     {
       return this == &other;
     }
-  } static r;
-  return &r;
+  };
+
+  // Constructing the memory resource this way ensures that no exit-time
+  // destructors will be called.
+  alignas(type) static char buffer[sizeof(type)];
+  static memory_resource *mr = new (buffer) type;
+  return mr;
 }
 
 inline memory_resource *null_memory_resource() noexcept
 {
-  struct : memory_resource
+  struct type : memory_resource
   {
     void *do_allocate(std::size_t, std::size_t) override
     {
@@ -589,8 +592,13 @@ inline memory_resource *null_memory_resource() noexcept
     {
       return this == &other;
     }
-  } static r;
-  return &r;
+  };
+
+  // Constructing the memory resource this way ensures that no exit-time
+  // destructors will be called.
+  alignas(type) static char buffer[sizeof(type)];
+  static memory_resource *mr = new (buffer) type;
+  return mr;
 }
 
 namespace detail {
