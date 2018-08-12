@@ -373,19 +373,19 @@ protected:
 class monotonic_buffer_resource : public memory_resource
 {
 public:
-  explicit monotonic_buffer_resource(memory_resource *upstream)
-    : upstream(upstream)
+  explicit monotonic_buffer_resource(memory_resource *mr)
+    : upstream(mr)
   {}
 
-  monotonic_buffer_resource(std::size_t initial_size, memory_resource *upstream)
-    : upstream(upstream), next_region_size(initial_size)
+  monotonic_buffer_resource(std::size_t initial_size, memory_resource *mr)
+    : upstream(mr), next_region_size(initial_size)
   {
     assert(initial_size > 0);
   }
 
   monotonic_buffer_resource(void *buffer, std::size_t buffer_size,
-                            memory_resource *upstream)
-    : upstream(upstream)
+                            memory_resource *mr)
+    : upstream(mr)
     , region_base_ptr(reinterpret_cast<std::byte *>(buffer))
     , region_cur_ptr(reinterpret_cast<std::byte *>(buffer))
     , region_end_ptr(reinterpret_cast<std::byte *>(buffer) + buffer_size)
@@ -408,7 +408,7 @@ public:
 
   monotonic_buffer_resource(const monotonic_buffer_resource &) = delete;
 
-  virtual ~monotonic_buffer_resource() { release(); }
+  virtual ~monotonic_buffer_resource() override { release(); }
 
   monotonic_buffer_resource &
   operator=(const monotonic_buffer_resource &) = delete;
@@ -440,7 +440,7 @@ protected:
     {
       assert(region_cur_ptr);
 
-      std::size_t space = region_end_ptr - region_cur_ptr;
+      auto space = static_cast<std::size_t>(region_end_ptr - region_cur_ptr);
       void *aligned_cur_ptr = region_cur_ptr;
       if (std::align(alignment, bytes, aligned_cur_ptr, space))
       {
@@ -468,8 +468,8 @@ protected:
     if (next_region_storage)
     {
       auto next_region_header = new (next_region_storage) owned_region_header;
-      next_region_header->prev_region_base_ptr = region_base_ptr,
-      next_region_header->prev_region_end_ptr = region_end_ptr,
+      next_region_header->prev_region_base_ptr = region_base_ptr;
+      next_region_header->prev_region_end_ptr = region_end_ptr;
       next_region_header->owns_prev_region = owns_region;
 
       const auto next_region_base_ptr =
@@ -484,7 +484,7 @@ protected:
 
       // We could just call do_allocate recursively here, but we need to assert
       // that the aligned address is good.
-      std::size_t space = region_end_ptr - region_cur_ptr;
+      auto space = static_cast<std::size_t>(region_end_ptr - region_cur_ptr);
       void *cur_ptr = region_cur_ptr;
       const auto aligned_cur_ptr = std::align(alignment, bytes, cur_ptr, space);
       assert(aligned_cur_ptr);
@@ -509,10 +509,10 @@ private:
   // Upstream memory resource from which we allocate regions.
   memory_resource *upstream;
 
-  std::byte *region_base_ptr = nullptr; //< Current region.
-  std::byte *region_cur_ptr = nullptr; //< Current free space in the region.
-  std::byte *region_end_ptr = nullptr; //< End of the region.
-  std::size_t next_region_size = 4096; //< Size of the next allocated region.
+  std::byte *region_base_ptr = nullptr; ///< Current region.
+  std::byte *region_cur_ptr = nullptr; ///< Current free space in the region.
+  std::byte *region_end_ptr = nullptr; ///< End of the region.
+  std::size_t next_region_size = 4096; ///< Size of the next allocated region.
 
   // Whether we allocated the region ourselves. Only the first region may be
   // unowned.
