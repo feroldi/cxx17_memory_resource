@@ -163,7 +163,8 @@ public:
   template <class T1, class T2>
   void construct(std::pair<T1, T2> *p)
   {
-    return construct(p, std::piecewise_construct, std::tuple(), std::tuple());
+    return construct(p, std::piecewise_construct, std::make_tuple(),
+                     std::make_tuple());
   }
 
   template <class T1, class T2, class U, class V>
