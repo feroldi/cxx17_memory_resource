@@ -66,7 +66,8 @@ public:
   memory_resource &operator=(const memory_resource &) = default;
 
   [[nodiscard]] void *allocate(std::size_t bytes,
-                               std::size_t alignment = _max_align) {
+                               std::size_t alignment = _max_align)
+  {
     return do_allocate(bytes, alignment);
   }
 
@@ -129,7 +130,8 @@ public:
   polymorphic_allocator &operator=(const polymorphic_allocator &) = delete;
 
   // [mem.poly.allocator.mem], member functions
-  [[nodiscard]] Tp *allocate(std::size_t n) {
+  [[nodiscard]] Tp *allocate(std::size_t n)
+  {
     return static_cast<Tp *>(res->allocate(n * sizeof(Tp), alignof(Tp)));
   }
 
@@ -139,7 +141,7 @@ public:
   }
 
   template <class T, class... Args>
-  void construct(T *p, Args &&... args)
+  void construct(T *p, Args &&...args)
   {
     using uses_alloc_tag =
       uses_alloc_ctor_t<T, polymorphic_allocator &, Args...>;
@@ -242,19 +244,19 @@ private:
   using uses_alloc2 = std::integral_constant<int, 2>;
 
   template <typename T, typename... Args>
-  void _construct(uses_alloc0, T *storage, Args &&... args)
+  void _construct(uses_alloc0, T *storage, Args &&...args)
   {
     ::new (storage) T(std::forward<Args>(args)...);
   }
 
   template <typename T, typename... Args>
-  void _construct(uses_alloc1, T *storage, Args &&... args)
+  void _construct(uses_alloc1, T *storage, Args &&...args)
   {
     ::new (storage) T(std::allocator_arg, *this, std::forward<Args>(args)...);
   }
 
   template <typename T, typename... Args>
-  void _construct(uses_alloc2, T *storage, Args &&... args)
+  void _construct(uses_alloc2, T *storage, Args &&...args)
   {
     ::new (storage) T(std::forward<Args>(args)..., *this);
   }
@@ -459,7 +461,9 @@ protected:
     // bytes, otherwise aligned addresses may cause the memory resource to think
     // the region is full, when in fact it has enough space but no good aligned
     // address.
-    const auto required_size = sizeof(owned_region_header) + alignment + bytes;
+    const auto required_size =
+      ((sizeof(owned_region_header) + alignment - 1) / alignment) * alignment +
+      bytes;
     if (next_region_size < required_size)
       next_region_size = required_size;
 
